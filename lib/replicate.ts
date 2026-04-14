@@ -1,44 +1,58 @@
 import Replicate from 'replicate'
-import type { StylePreset } from '@/types/database'
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN!,
 })
 
-const FASHION_PREFIX = 'fashion photography style, high quality, detailed clothing, professional lighting'
+const FORCED_NEGATIVE = [
+  'nsfw', 'nude', 'explicit', 'sexual', 'adult content',
+  'violence', 'gore', 'blood', 'realistic person', 'real face',
+  'child', 'minor', 'underage',
+].join(', ')
 
-const STYLE_MAP: Record<StylePreset, string> = {
-  casual: 'casual everyday fashion, relaxed style',
-  formal: 'formal business attire, professional look',
-  streetwear: 'urban streetwear, contemporary fashion',
-  vintage: 'vintage retro fashion, classic style',
-  minimal: 'minimalist fashion, clean lines, neutral colors',
+interface CreatePredictionParams {
+  modelVersion: string
+  triggerWord: string
+  userPrompt: string
+  bannedKeywords: string[]
 }
 
-export function buildPrompt(prompt: string, stylePreset?: StylePreset | null): string {
-  const stylePrefix = stylePreset ? `${STYLE_MAP[stylePreset]}, ` : ''
-  return `${FASHION_PREFIX}, ${stylePrefix}${prompt}`
+export function checkBannedKeywords(prompt: string, bannedKeywords: string[]): string | null {
+  const lower = prompt.toLowerCase()
+  for (const kw of bannedKeywords) {
+    if (kw && lower.includes(kw.toLowerCase())) {
+      return kw
+    }
+  }
+  return null
 }
 
-export const replicateClient = {
-  async generate(params: {
-    prompt: string
-    stylePreset?: StylePreset | null
-    width?: number
-    height?: number
-  }) {
-    const prediction = await replicate.predictions.create({
-      model: 'black-forest-labs/flux-schnell',
-      input: {
-        prompt: buildPrompt(params.prompt, params.stylePreset),
-        width: params.width ?? 1024,
-        height: params.height ?? 1024,
-        num_outputs: 1,
-        output_format: 'webp',
-        output_quality: 90,
-      },
-    })
+export async function createPrediction({
+  modelVersion,
+  triggerWord,
+  userPrompt,
+  bannedKeywords,
+}: CreatePredictionParams) {
+  const banned = checkBannedKeywords(userPrompt, bannedKeywords)
+  if (banned) {
+    throw new Error(`BANNED_KEYWORD:${banned}`)
+  }
 
-    return prediction
-  },
+  return await replicate.predictions.create({
+    version: modelVersion,
+    input: {
+      prompt: `${triggerWord}, ${userPrompt}`,
+      negative_prompt: FORCED_NEGATIVE,
+      num_inference_steps: 28,
+      guidance_scale: 3.5,
+      width: 1024,
+      height: 1024,
+      output_format: 'webp',
+      output_quality: 85,
+    },
+  })
+}
+
+export async function getPrediction(predictionId: string) {
+  return await replicate.predictions.get(predictionId)
 }

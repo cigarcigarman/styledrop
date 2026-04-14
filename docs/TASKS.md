@@ -1,232 +1,316 @@
 # 개발 태스크 — StyleDrop
-
-각 Phase 완료 후 `npm run typecheck`로 확인. 완료된 항목은 `[x]`로 표시.
+> Claude Code 터미널에서 순서대로 진행
 
 ---
 
-## Phase 1: 프로젝트 초기화 (1-2시간)
+## Phase 1: 기반 세팅 (Day 1-2)
+
+### 목표
+프로젝트 구조 + 디자인 시스템 + 레이아웃 완성
 
 ### 태스크
-- [ ] Next.js 14 프로젝트 생성 (App Router, TypeScript, Tailwind)
-- [ ] Supabase 클라이언트 설정 (`lib/supabase/`)
-- [ ] 환경변수 파일 생성 (`.env.local`)
-- [ ] 기본 폴더 구조 생성
-- [ ] `SCHEMA.md`의 SQL을 Supabase 대시보드에서 실행
+```
+□ 1-1. Next.js 14 프로젝트 생성
+        npx create-next-app@latest styledrop --typescript --tailwind --app
+
+□ 1-2. 의존성 설치
+        @supabase/supabase-js @supabase/ssr replicate next-pwa zustand
+
+□ 1-3. 폴더 구조 생성
+        app/ components/ lib/ hooks/ types/ supabase/ docs/
+
+□ 1-4. 디자인 토큰 설정
+        globals.css에 CSS 변수 추가
+        tailwind.config.ts에 커스텀 색상 추가
+
+□ 1-5. 기본 레이아웃
+        app/layout.tsx - 모바일 max-w-[430px] 중앙 정렬
+        components/layout/BottomNav.tsx
+        components/layout/Header.tsx
+
+□ 1-6. PWA 설정
+        public/manifest.json
+        next.config.js에 next-pwa 추가
+
+□ 1-7. Supabase 로컬 세팅
+        npx supabase init
+        npx supabase start
+        supabase/migrations/001_initial.sql 작성 (SCHEMA.md 기준)
+        npx supabase db push
+
+□ 1-8. 환경변수 설정
+        .env.local 작성
+        .env.example 작성 (키 값 없이)
+```
 
 ### Claude Code 프롬프트
 ```
-docs/SCHEMA.md를 읽어줘.
+docs/PRD.md와 docs/SCHEMA.md를 읽고 Phase 1을 시작해줘.
 
-다음을 실행해:
-1. Next.js 14 프로젝트 생성:
-   npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir=false --import-alias="@/*"
-
-2. 패키지 설치:
-   npm install @supabase/supabase-js @supabase/ssr replicate stripe
-
-3. 폴더 구조 생성:
-   - app/actions/
-   - app/api/generate/[id]/
-   - app/api/webhook/replicate/
-   - app/api/webhook/stripe/
-   - app/api/checkout/
-   - app/(auth)/login/
-   - app/(auth)/signup/
-   - app/dashboard/
-   - app/generate/
-   - app/pricing/
-   - components/ui/
-   - components/generation/
-   - lib/supabase/
-
-4. lib/supabase/client.ts (브라우저용)
-5. lib/supabase/server.ts (서버용, cookies)
-6. lib/supabase/service.ts (서비스 롤)
-7. lib/replicate.ts (docs/API.md 참조)
-8. .env.local.example 생성
-
-TypeScript strict mode로, any 사용 금지.
+1. Next.js 14 App Router + TypeScript + Tailwind 프로젝트 기반에서
+2. 모바일 우선 레이아웃 (max-w-[430px] 중앙 정렬)
+3. CSS 변수로 디자인 토큰 설정:
+   --bg: #0a0a0a
+   --surface: #141414
+   --surface2: #1e1e1e
+   --border: #2a2a2a
+   --text: #f0f0f0
+   --text2: #888888
+   --accent: #c8ff00
+4. BottomNav (갤러리/만들기/내계정 3탭)
+5. Header 컴포넌트
+6. Supabase 마이그레이션 파일 (SCHEMA.md 기준)
 ```
 
 ---
 
-## Phase 2: 인증 (2-3시간)
+## Phase 2: 갤러리 (Day 3-5)
+
+### 목표
+작가 갤러리 메인 페이지 완성
 
 ### 태스크
-- [ ] 로그인 페이지 (`app/(auth)/login/page.tsx`)
-- [ ] 회원가입 페이지 (`app/(auth)/signup/page.tsx`)
-- [ ] 인증 미들웨어 (`middleware.ts`)
-- [ ] 인증 콜백 라우트 (`app/auth/callback/route.ts`)
-- [ ] 로그인/로그아웃 서버 액션
+```
+□ 2-1. Supabase 클라이언트 설정
+        lib/supabase/client.ts (브라우저용)
+        lib/supabase/server.ts (서버 컴포넌트용)
+        types/database.ts (DB 타입)
+
+□ 2-2. 작가 갤러리 페이지
+        app/page.tsx
+        Supabase에서 artists + artist_samples fetch
+        2열 그리드 레이아웃
+
+□ 2-3. ArtistCard 컴포넌트
+        components/artist/ArtistCard.tsx
+        샘플 이미지 2×2 그리드
+        작가명 + [만들기] 버튼
+
+□ 2-4. 스켈레톤 로딩
+        components/ui/Skeleton.tsx
+        갤러리 로딩 상태
+
+□ 2-5. 작가 더미 데이터
+        supabase/seed.sql
+        테스트용 작가 2명 + 샘플 이미지
+```
 
 ### Claude Code 프롬프트
 ```
-Supabase Auth를 사용한 이메일/비밀번호 인증을 구현해줘.
+Phase 2: 작가 갤러리를 만들어줘.
 
-구현할 것:
-1. middleware.ts — /dashboard, /generate 경로를 인증 필요로 보호
-2. app/auth/callback/route.ts — OAuth 콜백 처리
-3. app/(auth)/login/page.tsx — 로그인 폼
-4. app/(auth)/signup/page.tsx — 회원가입 폼
-5. app/actions/auth.ts — 로그인/회원가입/로그아웃 서버 액션
+lib/supabase/client.ts와 server.ts를 먼저 만들고,
+app/page.tsx에서 Supabase로 artists 데이터를 fetch해서
+ArtistCard 2열 그리드로 보여줘.
 
-UI는 Tailwind만 사용, 외부 컴포넌트 라이브러리 없이.
-에러 메시지는 한국어로.
-성공 시 /dashboard로 리다이렉트.
+ArtistCard는:
+- 샘플 이미지 2×2 그리드 (aspect-ratio: 1)
+- 작가명 (@handle)
+- 가격 표시
+- [이 화풍으로 만들기] 버튼 (accent 색상)
+
+Skeleton 로딩도 포함해줘.
 ```
 
 ---
 
-## Phase 3: 이미지 생성 (3-4시간)
+## Phase 3: 생성 스튜디오 (Day 6-10)
+
+### 목표
+Replicate LoRA 이미지 생성 + NSFW 필터 완성
 
 ### 태스크
-- [ ] 생성 폼 컴포넌트 (`components/generation/GenerateForm.tsx`)
-- [ ] 생성 서버 액션 (`app/actions/generate.ts`)
-- [ ] Replicate 웹훅 라우트 (`app/api/webhook/replicate/route.ts`)
-- [ ] 생성 상태 폴링 훅 (`hooks/useGeneration.ts`)
-- [ ] 생성 결과 표시 컴포넌트
+```
+□ 3-1. Replicate 클라이언트
+        lib/replicate.ts
+        createPrediction 함수 (API.md 기준)
+        FORCED_NEGATIVE 포함
+        금지 키워드 체크 포함
+
+□ 3-2. 생성 API 라우트
+        app/api/generate/route.ts (POST)
+        app/api/generate/[predictionId]/route.ts (GET 폴링)
+
+□ 3-3. 스튜디오 페이지
+        app/studio/page.tsx
+        화풍 선택 (가로 스크롤 칩)
+        프롬프트 입력창
+        예시 프롬프트 버튼 3개
+        [생성하기] 버튼
+        크레딧 잔액 표시
+
+□ 3-4. 생성 결과 컴포넌트
+        components/studio/ResultViewer.tsx
+        로딩 중 / 완료 / 실패 상태
+        [저장] [다시 생성] 버튼
+
+□ 3-5. 이미지 저장
+        Supabase Storage에 업로드
+        다운로드 기능
+
+□ 3-6. 크레딧 차감 로직
+        deduct_credit SQL 함수 적용
+
+□ 3-7. 크레딧 없을 때 UX
+        402 에러 시 충전 유도 모달
+```
 
 ### Claude Code 프롬프트
 ```
-docs/API.md를 읽어줘.
+Phase 3: AI 생성 스튜디오를 만들어줘.
 
-이미지 생성 플로우를 구현해줘:
+docs/API.md를 읽고:
 
-1. app/actions/generate.ts
-   - 인증 확인
-   - 크레딧 확인 (부족 시 에러)
-   - generations 레코드 생성
-   - deduct_credits DB 함수 호출
-   - Replicate API 호출 (lib/replicate.ts)
-   - prediction ID 저장
-   
-2. app/api/webhook/replicate/route.ts
-   - Replicate 완료 콜백 처리
-   - succeeded: 이미지 URL 저장
-   - failed: 크레딧 환불 (add_credits 함수)
+1. lib/replicate.ts - createPrediction 함수
+   - FORCED_NEGATIVE 네거티브 프롬프트 강제
+   - 금지 키워드 체크
+   - Flux LoRA 설정
 
-3. hooks/useGeneration.ts
-   - generation ID로 Supabase realtime 구독 또는 2초 폴링
-   - status가 succeeded/failed면 중단
+2. app/api/generate/route.ts (POST)
+   - 인증 확인 → 크레딧 확인 → 생성 → 크레딧 차감
 
-4. components/generation/GenerateForm.tsx
-   - 프롬프트 입력 (최대 500자)
-   - 스타일 프리셋 선택 버튼 (casual/formal/streetwear/vintage/minimal)
-   - 생성 중 로딩 상태
-   - 결과 이미지 표시 + 다운로드 버튼
+3. app/api/generate/[predictionId]/route.ts (GET)
+   - Replicate 상태 폴링
+   - 완료 시 Supabase Storage 저장
 
-크레딧 부족 시 /pricing 페이지로 안내.
+4. app/studio/page.tsx
+   - 보유 크레딧 있는 작가 선택
+   - 프롬프트 입력
+   - 3초 폴링으로 결과 확인
+   - 저장 버튼
+
+크레딧 없으면 충전 페이지로 유도해줘.
 ```
 
 ---
 
-## Phase 4: 대시보드 갤러리 (2시간)
+## Phase 4: 결제 (Day 11-14)
+
+### 목표
+카카오 소셜 로그인 + 토스 결제 + 크레딧 지급
 
 ### 태스크
-- [ ] 대시보드 페이지 (`app/dashboard/page.tsx`)
-- [ ] 갤러리 그리드 컴포넌트
-- [ ] 크레딧 잔액 표시
-- [ ] 무한 스크롤 또는 페이지네이션
+```
+□ 4-1. Supabase Auth 설정
+        카카오 소셜 로그인 설정
+        lib/supabase/auth.ts
+        middleware.ts (인증 보호)
+
+□ 4-2. 로그인 페이지
+        app/login/page.tsx
+        카카오 로그인 버튼
+
+□ 4-3. 토스페이먼츠 연동
+        lib/toss.ts
+        app/charge/page.tsx (상품 선택)
+
+□ 4-4. 결제 API
+        app/api/payment/confirm/route.ts
+        토스 서버 검증 → 크레딧 지급
+
+□ 4-5. 결제 성공/실패 페이지
+        app/charge/success/page.tsx
+        app/charge/fail/page.tsx
+```
 
 ### Claude Code 프롬프트
 ```
-app/dashboard/page.tsx를 구현해줘.
+Phase 4: 인증과 결제를 만들어줘.
 
-포함할 것:
-1. 상단: 유저 이름, 크레딧 잔액, "이미지 생성하기" 버튼
-2. 본문: 내 생성 이력 갤러리 (그리드, 최신순)
-   - 각 카드: 이미지 썸네일, 프롬프트 일부, 생성일
-   - status가 processing이면 로딩 스켈레톤
-   - status가 failed면 실패 표시
-3. "더 불러오기" 버튼 (12개씩 페이지네이션)
+1. Supabase Auth 카카오 로그인
+   - middleware.ts로 /studio, /my, /charge 보호
+   - 미인증 → /login 리다이렉트
 
-서버 컴포넌트로 초기 12개 로드.
-Supabase 쿼리에 RLS 자동 적용됨.
+2. 토스페이먼츠 결제
+   - app/charge/page.tsx: 1회(990원), 5회(4,500원) 선택
+   - app/api/payment/confirm/route.ts: 서버에서 검증
+   - 성공 시 credits 테이블 업데이트
+
+결제 검증은 반드시 서버에서만 해줘.
+클라이언트에서 amount를 신뢰하지 말고
+서버에서 orderId에 맞는 금액을 검증해줘.
 ```
 
 ---
 
-## Phase 5: 결제 (2-3시간)
+## Phase 5: 마이페이지 + QA (Day 15-18)
+
+### 목표
+마이페이지 완성 + 전체 플로우 QA
 
 ### 태스크
-- [ ] 가격 페이지 (`app/pricing/page.tsx`)
-- [ ] Stripe 체크아웃 라우트 (`app/api/checkout/route.ts`)
-- [ ] Stripe 웹훅 라우트 (`app/api/webhook/stripe/route.ts`)
-- [ ] 결제 성공 후 크레딧 지급 확인
-
-### Claude Code 프롬프트
 ```
-docs/API.md의 결제 섹션을 읽어줘.
+□ 5-1. 마이페이지
+        app/my/page.tsx
+        크레딧 잔액
+        생성 기록 4열 그리드
 
-결제 시스템을 구현해줘:
+□ 5-2. Toast 알림
+        components/ui/Toast.tsx
+        생성 완료/실패/필터링 알림
 
-1. app/pricing/page.tsx
-   - credit_packages 테이블에서 패키지 목록 조회
-   - 각 패키지 카드: 이름, 크레딧 수, 가격, 이미지당 단가
-   - "구매하기" 버튼 → /api/checkout 호출 → Stripe 리다이렉트
-   - 현재 로그인 유저의 크레딧 잔액 표시
+□ 5-3. 에러 핸들링
+        app/error.tsx
+        각 API 에러 케이스 처리
 
-2. app/api/checkout/route.ts
-   - docs/API.md 구현 그대로 사용
-   - 비로그인 시 /login 리다이렉트
+□ 5-4. 모바일 QA
+        iOS Safari 테스트
+        Android Chrome 테스트
+        PWA 홈화면 추가 테스트
 
-3. app/api/webhook/stripe/route.ts
-   - checkout.session.completed 이벤트 처리
-   - add_credits DB 함수로 크레딧 지급
-   - 중복 처리 방지 (payment_intent_id 확인)
-
-로컬 테스트: stripe listen --forward-to localhost:3000/api/webhook/stripe
+□ 5-5. 성능 최적화
+        이미지 next/image 적용
+        Suspense 경계 추가
 ```
 
 ---
 
-## Phase 6: 폴리싱 + 배포 준비 (2시간)
+## Phase 6: 런칭 (Day 19-21)
+
+### 목표
+프로덕션 배포 + 실제 작가 데이터 입력
 
 ### 태스크
-- [ ] 랜딩 페이지 (`app/page.tsx`)
-- [ ] 에러 바운더리 (`app/error.tsx`)
-- [ ] 로딩 UI (`app/loading.tsx`, `app/dashboard/loading.tsx`)
-- [ ] 메타데이터 설정 (SEO)
-- [ ] `npm run typecheck` 통과
-- [ ] `npm run build` 통과
-
-### Claude Code 프롬프트
 ```
-배포 전 폴리싱 작업:
+□ 6-1. Vercel 배포
+        docs/DEPLOY.md 참고
+        환경변수 전체 설정
 
-1. app/page.tsx — 랜딩 페이지
-   - 히어로: "AI로 나만의 패션 스타일을 시각화하세요"
-   - 생성 예시 이미지 3-4개 (placeholder 사용)
-   - 기능 소개 3개
-   - 가격 섹션 (pricing 페이지 링크)
-   - CTA: "무료로 시작하기 (크레딧 5개 제공)"
+□ 6-2. Supabase 프로덕션 마이그레이션
+        npx supabase link
+        npx supabase db push
 
-2. app/error.tsx — 글로벌 에러 UI
-3. app/dashboard/error.tsx
-4. app/generate/page.tsx — /generate 경로에서 바로 생성 폼
-5. 모든 페이지 metadata export 추가
+□ 6-3. 토스페이먼츠 라이브 키 전환
+        테스트 → 라이브 키
 
-npm run typecheck 실행해서 에러 모두 수정해줘.
+□ 6-4. 작가 데이터 입력
+        실제 LoRA 모델 버전 해시
+        실제 샘플 이미지
+
+□ 6-5. 배포 체크리스트 확인
+        docs/DEPLOY.md 체크리스트
+
+□ 6-6. 소프트 런칭
+        작가 본인 트위터 공유
+        반응 모니터링 시작
 ```
 
 ---
 
-## Phase 7: 배포 (docs/DEPLOY.md 참조)
+## 공통 규칙
 
-- [ ] Supabase 프로젝트 프로덕션 설정
-- [ ] Vercel 배포
-- [ ] 환경변수 설정
-- [ ] Stripe 웹훅 프로덕션 등록
-- [ ] 도메인 연결
-
----
-
-## 버그 수정 / 작업 중 발생하는 문제
-
-이슈가 생기면 여기에 기록:
-
+### 각 Phase 완료 기준
 ```
-# 예시
-- [ ] 이미지 생성 후 갤러리 자동 갱신 안 되는 문제
-- [ ] 모바일에서 생성 폼 레이아웃 깨짐
+□ npm run build 에러 없음
+□ npm run typecheck 에러 없음
+□ 모바일 브라우저에서 실제 동작 확인
+□ 핵심 플로우 수동 테스트 완료
+```
+
+### Claude Code 작업 방식
+```
+1. 태스크 하나씩 진행 (한 번에 여러 개 X)
+2. 완료 후 typecheck 실행
+3. 에러 나면 즉시 수정 후 다음 진행
+4. 큰 변경은 git commit 후 진행
 ```

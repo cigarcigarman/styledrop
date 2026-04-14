@@ -1,168 +1,230 @@
 # 배포 가이드 — StyleDrop
 
-## 배포 스택
-- **앱**: Vercel (Next.js)
-- **DB + 인증**: Supabase
-- **결제**: Stripe
-- **AI**: Replicate
-- **도메인**: 별도 구매 (Namecheap, Cloudflare 등)
+## 인프라 구성
 
----
-
-## Step 1: Supabase 프로젝트 설정
-
-### 1-1. 프로젝트 생성
-1. [supabase.com](https://supabase.com) → New Project
-2. 이름: `styledrop-prod`
-3. 리전: Northeast Asia (Seoul) — 한국 유저 기준 가장 빠름
-4. DB 비밀번호 안전한 곳에 저장
-
-### 1-2. 스키마 실행
-1. Supabase Dashboard → SQL Editor
-2. `docs/SCHEMA.md`의 SQL을 순서대로 실행:
-   - Extensions
-   - Tables
-   - RLS Policies
-   - Functions
-   - Triggers
-
-### 1-3. 키 확인
-Settings → API:
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY` (절대 공개 금지)
-
-### 1-4. 인증 설정
-Authentication → URL Configuration:
-- Site URL: `https://yourdomain.com`
-- Redirect URLs: `https://yourdomain.com/auth/callback`
-
-### 1-5. Storage 버킷 생성
-Storage → New bucket:
-- 이름: `generations`
-- Public: **Yes** (이미지 공개 접근)
-
-```sql
--- Storage 정책 추가 (SQL Editor)
-create policy "users can upload own images"
-  on storage.objects for insert
-  with check (bucket_id = 'generations' AND auth.uid()::text = (storage.foldername(name))[1]);
-
-create policy "anyone can view images"
-  on storage.objects for select
-  using (bucket_id = 'generations');
+```
+[유저 브라우저 PWA]
+        ↓
+   [Vercel CDN]
+   Next.js 14 App
+        ↓
+   [Supabase]          [Replicate API]    [토스페이먼츠]
+   DB + Auth           Flux LoRA 생성     카드 결제
+   Storage
 ```
 
 ---
 
-## Step 2: Stripe 설정
+## 1. 로컬 개발 환경 세팅
 
-### 2-1. 계정 설정
-1. [stripe.com](https://stripe.com) 계정 생성 + 활성화
-2. 실명/사업자 정보 입력 (결제 수취를 위해 필수)
-
-### 2-2. 프로덕션 키 확인
-Developers → API keys:
-- `STRIPE_SECRET_KEY` (sk_live_...)
-- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (pk_live_...)
-
-### 2-3. 웹훅 등록
-Developers → Webhooks → Add endpoint:
-- URL: `https://yourdomain.com/api/webhook/stripe`
-- Events: `checkout.session.completed`
-- `STRIPE_WEBHOOK_SECRET` 저장
-
----
-
-## Step 3: Replicate 설정
-
-1. [replicate.com](https://replicate.com) → Account → API tokens
-2. 새 토큰 생성
-3. `REPLICATE_API_TOKEN` 저장
-
----
-
-## Step 4: Vercel 배포
-
-### 4-1. GitHub에 코드 푸시
+### 필수 설치
 ```bash
-git init
-git add .
-git commit -m "initial commit"
-gh repo create styledrop --private --push
+node >= 18
+npm >= 9
+npx supabase CLI
 ```
 
-### 4-2. Vercel 연결
-1. [vercel.com](https://vercel.com) → New Project
-2. GitHub 레포 선택
-3. Framework: Next.js (자동 감지)
-
-### 4-3. 환경변수 설정
-Vercel Dashboard → Project → Settings → Environment Variables:
-
-```
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
-REPLICATE_API_TOKEN=
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
-NEXT_PUBLIC_APP_URL=https://yourdomain.com
-```
-
-### 4-4. 배포
+### 프로젝트 초기화
 ```bash
-# 자동 배포 (main 브랜치 푸시 시 자동)
-git push origin main
+# 1. 프로젝트 생성
+npx create-next-app@latest styledrop \
+  --typescript \
+  --tailwind \
+  --app \
+  --no-src-dir \
+  --import-alias "@/*"
+
+cd styledrop
+
+# 2. 의존성 설치
+npm install \
+  @supabase/supabase-js \
+  @supabase/ssr \
+  replicate \
+  next-pwa \
+  zustand
+
+npm install -D \
+  supabase \
+  @types/node
+
+# 3. Supabase 로컬 시작
+npx supabase init
+npx supabase start
+
+# 4. 스키마 적용
+npx supabase db push
+
+# 5. 환경변수 설정
+cp .env.example .env.local
+# .env.local 값 채우기
+```
+
+### .env.local
+```bash
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-local-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-local-service-role-key
+
+# Replicate
+REPLICATE_API_TOKEN=r8_xxxxxxxxxxxx
+
+# 토스페이먼츠 (테스트 키)
+NEXT_PUBLIC_TOSS_CLIENT_KEY=test_ck_xxxxxxxxxxxx
+TOSS_SECRET_KEY=test_sk_xxxxxxxxxxxx
+
+# 앱
+NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
 ---
 
-## Step 5: 도메인 연결
+## 2. Supabase 프로덕션 세팅
 
-1. Vercel → Project → Settings → Domains → Add domain
-2. DNS 설정:
-   - A record: `76.76.21.21`
-   - CNAME: `cname.vercel-dns.com`
-3. SSL 자동 발급 (수분 소요)
+### 프로젝트 생성
+```bash
+# supabase.com 에서 새 프로젝트 생성
+# 리전: Northeast Asia (Seoul)
+
+# 로컬 → 프로덕션 마이그레이션
+npx supabase link --project-ref your-project-ref
+npx supabase db push
+
+# 카카오 소셜 로그인 설정
+# Supabase Dashboard → Auth → Providers → Kakao
+# Kakao Developers 에서 REST API 키 발급 후 입력
+```
+
+### Storage 버킷 생성
+```bash
+# Supabase Dashboard → Storage → New bucket
+# 이름: generations
+# Public: false (유저 본인만 접근)
+```
 
 ---
 
-## 배포 후 체크리스트
+## 3. Vercel 배포
 
+### 초기 배포
+```bash
+# Vercel CLI 설치
+npm i -g vercel
+
+# 배포
+vercel
+
+# 환경변수 설정
+vercel env add NEXT_PUBLIC_SUPABASE_URL
+vercel env add NEXT_PUBLIC_SUPABASE_ANON_KEY
+vercel env add SUPABASE_SERVICE_ROLE_KEY
+vercel env add REPLICATE_API_TOKEN
+vercel env add NEXT_PUBLIC_TOSS_CLIENT_KEY
+vercel env add TOSS_SECRET_KEY
+vercel env add NEXT_PUBLIC_APP_URL
 ```
-[ ] 회원가입 → 크레딧 5개 자동 지급 확인
-[ ] 로그인/로그아웃 동작 확인
-[ ] 이미지 생성 엔드-투-엔드 테스트 (실제 크레딧 사용)
-[ ] Stripe 결제 테스트 (테스트 카드: 4242 4242 4242 4242)
-[ ] 결제 후 크레딧 지급 확인
-[ ] Replicate 웹훅 수신 확인 (Replicate 대시보드에서)
-[ ] 이미지가 Supabase Storage에 저장되는지 확인
-[ ] 모바일 브라우저 테스트
+
+### 도메인 연결
+```bash
+# Vercel Dashboard → Domains → Add
+# styledrop.kr (가비아/후이즈에서 구매)
+# DNS: CNAME → cname.vercel-dns.com
+```
+
+### 자동 배포 설정
+```bash
+# GitHub 연결 → main 브랜치 push 시 자동 배포
+vercel --prod  # 수동 프로덕션 배포
 ```
 
 ---
 
-## 로컬 개발 환경
+## 4. 토스페이먼츠 프로덕션 전환
 
 ```bash
-# Stripe 웹훅 로컬 포워딩
-stripe listen --forward-to localhost:3000/api/webhook/stripe
+# 토스페이먼츠 대시보드 → 상점 정보 등록
+# 사업자 등록증 없으면: 개인 판매자로 등록 가능
+# 심사 기간: 영업일 2-3일
 
-# Replicate 웹훅은 ngrok 사용
-ngrok http 3000
-# NEXT_PUBLIC_APP_URL을 ngrok URL로 임시 변경
-
-# 개발 서버
-npm run dev
+# 심사 완료 후 프로덕션 키로 교체
+NEXT_PUBLIC_TOSS_CLIENT_KEY=live_ck_xxxxxxxxxxxx
+TOSS_SECRET_KEY=live_sk_xxxxxxxxxxxx
 ```
 
 ---
 
-## 모니터링
+## 5. PWA 설정
 
-- **에러**: Vercel → Functions → Logs
-- **DB 쿼리**: Supabase → Logs → API
-- **결제**: Stripe → Payments
-- **AI 사용량**: Replicate → Dashboard → Usage
+### next.config.js
+```javascript
+const withPWA = require('next-pwa')({
+  dest: 'public',
+  register: true,
+  skipWaiting: true,
+  disable: process.env.NODE_ENV === 'development',
+})
+
+module.exports = withPWA({
+  // 기존 next 설정
+})
+```
+
+### public/manifest.json
+```json
+{
+  "name": "StyleDrop",
+  "short_name": "StyleDrop",
+  "description": "좋아하는 작가 화풍으로 AI 이미지 만들기",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
+```
+
+---
+
+## 6. Replicate LoRA 학습 방법
+
+### 작가 온보딩 시 진행
+```bash
+# 1. 작가에게 그림 50-100장 받기
+#    - 같은 화풍의 다양한 구도
+#    - 1024x1024 권장, 최소 512x512
+#    - 배경 다양하게
+
+# 2. Replicate에서 Flux LoRA 학습
+# https://replicate.com/ostris/flux-dev-lora-trainer/train
+# input_images: zip 파일로 업로드
+# trigger_word: 작가명 기반 (예: mochimochi_style)
+# steps: 1000-2000
+# 비용: 약 $2-3 (2,700-4,000원)
+
+# 3. 학습 완료 후 version hash 받아서
+#    artists 테이블에 replicate_model_version 업데이트
+```
+
+---
+
+## 7. 배포 체크리스트
+
+### 런칭 전 필수 확인
+```
+□ Supabase RLS 정책 전체 동작 확인
+□ 토스 결제 → 크레딧 지급 흐름 실 결제 테스트
+□ Replicate 생성 → Storage 저장 흐름 확인
+□ NSFW 필터 동작 확인
+□ 크레딧 0일 때 생성 시도 → 402 반환 확인
+□ 모바일 Safari PWA 홈화면 추가 테스트
+□ 모바일 Chrome 결제 플로우 테스트
+□ Vercel 환경변수 전체 설정 확인
+□ 작가 샘플 이미지 업로드 완료
+□ 작가 LoRA 모델 동작 확인 (품질 검수)
+```

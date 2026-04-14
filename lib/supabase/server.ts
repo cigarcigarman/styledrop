@@ -19,7 +19,7 @@ export function createClient() {
               cookieStore.set(name, value, options)
             )
           } catch {
-            // 서버 컴포넌트에서 쿠키 설정 불가 시 무시
+            // 서버 컴포넌트에서 set 불가 — 미들웨어가 처리
           }
         },
       },

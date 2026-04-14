@@ -1,141 +1,118 @@
-# DB 스키마 — StyleDrop
+-- StyleDrop 초기 스키마
 
-## 테이블 목록
-
-### artists (작가)
-```sql
+-- 작가
 create table artists (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   twitter_handle text,
   avatar_url text,
   bio text,
-  replicate_model_version text not null,  -- Flux LoRA 버전 해시
-  trigger_word text not null,             -- LoRA 활성화 키워드
-  banned_keywords text[] default '{}',    -- 작가 설정 금지 키워드
-  daily_limit integer default 500,        -- 일일 생성 상한
+  replicate_model_version text not null,
+  trigger_word text not null,
+  banned_keywords text[] default '{}',
+  daily_limit integer default 500,
   is_active boolean default true,
   sort_order integer default 0,
   created_at timestamptz default now()
 );
-```
 
-### artist_samples (작가 샘플 이미지)
-```sql
+-- 작가 샘플 이미지
 create table artist_samples (
   id uuid primary key default gen_random_uuid(),
   artist_id uuid references artists(id) on delete cascade,
   image_url text not null,
   sort_order integer default 0
 );
-```
 
-### profiles (유저 프로필)
-```sql
+-- 유저 프로필
 create table profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   nickname text,
   avatar_url text,
   created_at timestamptz default now()
 );
-```
 
-### credits (크레딧 잔액)
-```sql
+-- 크레딧 잔액
 create table credits (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references profiles(id) on delete cascade unique,
   amount integer not null default 0,
   updated_at timestamptz default now()
 );
-```
 
-### payments (결제 내역)
-```sql
+-- 결제 내역
 create table payments (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references profiles(id),
-  payment_key text unique,        -- 토스 결제 키
-  order_id text unique,           -- 주문 ID
-  amount integer not null,        -- 결제 금액 (원)
+  payment_key text unique,
+  order_id text unique,
+  amount integer not null,
   credits_granted integer not null,
-  status text default 'pending',  -- pending / done / failed
+  status text default 'pending',
   created_at timestamptz default now()
 );
-```
 
-### generations (생성 기록)
-```sql
+-- 생성 기록
 create table generations (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references profiles(id),
   artist_id uuid references artists(id),
   prompt text not null,
-  result_url text,                -- Supabase Storage URL
+  result_url text,
   replicate_prediction_id text,
   is_filtered boolean default false,
-  status text default 'pending',  -- pending / done / failed / filtered
+  status text default 'pending',
   credits_used integer default 1,
   created_at timestamptz default now()
 );
-```
 
-### artist_payouts (작가 정산)
-```sql
+-- 작가 정산
 create table artist_payouts (
   id uuid primary key default gen_random_uuid(),
   artist_id uuid references artists(id),
   generation_count integer not null,
-  amount integer not null,        -- 정산액 (원)
+  amount integer not null,
   period_start date,
   period_end date,
-  status text default 'pending',  -- pending / paid
+  status text default 'pending',
   created_at timestamptz default now()
 );
-```
 
----
-
-## RLS 정책
-
-```sql
--- artists: 누구나 조회, 관리자만 수정
+-- RLS 활성화
 alter table artists enable row level security;
+alter table artist_samples enable row level security;
+alter table profiles enable row level security;
+alter table credits enable row level security;
+alter table payments enable row level security;
+alter table generations enable row level security;
+
+-- RLS 정책
 create policy "artists_public_read" on artists
   for select using (is_active = true);
 
--- profiles: 본인만
-alter table profiles enable row level security;
+create policy "samples_public_read" on artist_samples
+  for select using (true);
+
 create policy "profiles_own" on profiles
   for all using (auth.uid() = id);
 
--- credits: 본인만
-alter table credits enable row level security;
 create policy "credits_own" on credits
   for all using (auth.uid() = user_id);
 
--- payments: 본인 조회만
-alter table payments enable row level security;
 create policy "payments_own_read" on payments
   for select using (auth.uid() = user_id);
 
--- generations: 본인만
-alter table generations enable row level security;
 create policy "generations_own" on generations
   for all using (auth.uid() = user_id);
 
--- artist_samples: 공개
-alter table artist_samples enable row level security;
-create policy "samples_public_read" on artist_samples
-  for select using (true);
-```
+-- 인덱스
+create index idx_generations_user_id on generations(user_id);
+create index idx_generations_artist_id on generations(artist_id);
+create index idx_generations_created_at on generations(created_at desc);
+create index idx_generations_status on generations(status);
+create index idx_artists_is_active on artists(is_active, sort_order);
 
----
-
-## 트리거
-
-```sql
--- 유저 가입 시 profile + credits 자동 생성
+-- 유저 가입 트리거: profiles + credits 자동 생성
 create or replace function handle_new_user()
 returns trigger as $$
 begin
@@ -153,16 +130,50 @@ $$ language plpgsql security definer;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function handle_new_user();
-```
 
----
+-- 크레딧 차감 함수 (동시성 안전)
+create or replace function deduct_credit(p_user_id uuid)
+returns boolean as $$
+declare
+  v_current integer;
+begin
+  select amount into v_current
+  from credits
+  where user_id = p_user_id
+  for update;
 
-## 인덱스
+  if v_current < 1 then
+    return false;
+  end if;
 
-```sql
-create index idx_generations_user_id on generations(user_id);
-create index idx_generations_artist_id on generations(artist_id);
-create index idx_generations_created_at on generations(created_at desc);
-create index idx_generations_status on generations(status);
-create index idx_artists_is_active on artists(is_active, sort_order);
-```
+  update credits
+  set amount = amount - 1,
+      updated_at = now()
+  where user_id = p_user_id;
+
+  return true;
+end;
+$$ language plpgsql;
+
+-- 테스트용 더미 작가 데이터
+insert into artists (
+  name, twitter_handle, bio,
+  replicate_model_version, trigger_word,
+  is_active, sort_order
+) values
+(
+  '모치모치',
+  'mochimochi_art',
+  '파스텔 감성 캐릭터 일러스트',
+  'placeholder_version_hash_1',
+  'mochimochi_style',
+  true, 1
+),
+(
+  '린린',
+  'linlin_draws',
+  '깔끔한 선화 감성 일러스트',
+  'placeholder_version_hash_2',
+  'linlin_style',
+  true, 2
+);

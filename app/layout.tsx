@@ -1,35 +1,39 @@
-import type { Metadata } from "next";
-import localFont from "next/font/local";
-import "./globals.css";
-
-const geistSans = localFont({
-  src: "./fonts/GeistVF.woff",
-  variable: "--font-geist-sans",
-  weight: "100 900",
-});
-const geistMono = localFont({
-  src: "./fonts/GeistMonoVF.woff",
-  variable: "--font-geist-mono",
-  weight: "100 900",
-});
+import type { Metadata, Viewport } from 'next'
+import './globals.css'
 
 export const metadata: Metadata = {
-  title: "StyleDrop — AI 패션 스타일 생성",
-  description: "텍스트로 나만의 패션 스타일을 시각화하세요. AI가 고품질 패션 이미지를 생성합니다.",
-};
+  title: 'StyleDrop',
+  description: '좋아하는 작가 화풍으로 AI 이미지 만들기',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'StyleDrop',
+  },
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: '#0a0a0a',
+}
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: {
+  children: React.ReactNode
+}) {
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
+    <html lang="ko">
+      <body>
+        <div className="min-h-screen flex flex-col items-center bg-[var(--bg)]">
+          <div className="w-full max-w-app flex flex-col min-h-screen relative">
+            {children}
+          </div>
+        </div>
       </body>
     </html>
-  );
+  )
 }

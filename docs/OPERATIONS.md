@@ -1,203 +1,310 @@
-# 운영 SQL — StyleDrop
+# 운영 가이드 — StyleDrop
 
-## Supabase Dashboard → SQL Editor에서 실행
+## 1. 일간 모니터링
 
----
+### 매일 확인할 쿼리 (Supabase SQL Editor)
 
-## 일간 확인 쿼리
-
-### 오늘의 핵심 지표
 ```sql
+-- 오늘 생성 건수 + 성공률
 select
-  (select count(*) from profiles where created_at::date = current_date) as new_users_today,
-  (select count(*) from generations where created_at::date = current_date) as generations_today,
-  (select count(*) from generations where created_at::date = current_date and status = 'failed') as failed_today,
-  (select coalesce(sum(price_usd), 0) / 100.0 from credit_packages cp
-   join credit_transactions ct on ct.description like '%구매%'
-   where ct.created_at::date = current_date and ct.type = 'purchase') as revenue_today_usd;
-```
-
-### 오늘 실패한 생성 목록
-```sql
-select
-  g.id,
-  g.user_id,
-  p.email,
-  g.prompt,
-  g.error_message,
-  g.created_at
-from generations g
-join profiles p on p.id = g.user_id
-where g.status = 'failed'
-  and g.created_at::date = current_date
-order by g.created_at desc;
-```
-
----
-
-## 주간 확인 쿼리
-
-### 주간 DAU (일별 활성 유저)
-```sql
-select
-  date_trunc('day', created_at)::date as date,
-  count(distinct user_id) as active_users,
-  count(*) as total_generations,
-  count(*) filter (where status = 'succeeded') as successful,
-  count(*) filter (where status = 'failed') as failed
+  count(*) as total,
+  count(*) filter (where status = 'done') as success,
+  count(*) filter (where status = 'failed') as failed,
+  count(*) filter (where status = 'filtered') as filtered,
+  round(
+    count(*) filter (where status = 'done') * 100.0 / count(*),
+    1
+  ) as success_rate
 from generations
-where created_at >= current_date - interval '7 days'
-group by 1
-order by 1 desc;
+where created_at >= current_date;
+
+-- 오늘 결제 건수 + 금액
+select
+  count(*) as count,
+  sum(amount) as total_amount,
+  sum(credits_granted) as total_credits
+from payments
+where created_at >= current_date
+  and status = 'done';
+
+-- 재사용률 (7일 내 2회 이상 결제한 유저 비율)
+select
+  count(distinct user_id) as repeat_users,
+  (select count(distinct user_id) from payments
+   where created_at >= now() - interval '7 days'
+   and status = 'done') as total_users,
+  round(
+    count(distinct user_id) * 100.0 /
+    nullif((select count(distinct user_id) from payments
+            where created_at >= now() - interval '7 days'
+            and status = 'done'), 0),
+    1
+  ) as repeat_rate
+from payments
+where status = 'done'
+  and created_at >= now() - interval '7 days'
+group by user_id
+having count(*) >= 2;
+
+-- 작가별 오늘 생성 건수
+select
+  a.name,
+  a.twitter_handle,
+  count(g.id) as today_count
+from artists a
+left join generations g
+  on g.artist_id = a.id
+  and g.created_at >= current_date
+  and g.status = 'done'
+group by a.id, a.name, a.twitter_handle
+order by today_count desc;
 ```
 
-### 유저별 사용량 TOP 20
+---
+
+## 2. 주간 정산
+
+### 매주 월요일 실행
+
 ```sql
+-- 지난 주 작가별 정산액 계산
 select
-  p.email,
-  p.credits as current_credits,
-  p.total_generated,
-  count(g.id) as generations_this_week,
-  min(g.created_at) as first_generation,
-  max(g.created_at) as last_generation
-from profiles p
-left join generations g on g.user_id = p.id
-  and g.created_at >= current_date - interval '7 days'
-group by p.id, p.email, p.credits, p.total_generated
+  a.name,
+  a.twitter_handle,
+  count(g.id) as generation_count,
+  count(g.id) * 634 as payout_amount  -- 건당 634원
+from artists a
+join generations g on g.artist_id = a.id
+where g.status = 'done'
+  and g.created_at >= date_trunc('week', now()) - interval '1 week'
+  and g.created_at < date_trunc('week', now())
+group by a.id, a.name, a.twitter_handle
 having count(g.id) > 0
-order by generations_this_week desc
-limit 20;
+order by payout_amount desc;
+
+-- 정산 레코드 insert
+insert into artist_payouts (artist_id, generation_count, amount, period_start, period_end)
+select
+  a.id,
+  count(g.id),
+  count(g.id) * 634,
+  date_trunc('week', now())::date - 7,
+  date_trunc('week', now())::date - 1
+from artists a
+join generations g on g.artist_id = a.id
+where g.status = 'done'
+  and g.created_at >= date_trunc('week', now()) - interval '1 week'
+  and g.created_at < date_trunc('week', now())
+group by a.id
+having count(g.id) > 0;
 ```
 
-### 주간 수익
-```sql
-select
-  date_trunc('day', ct.created_at)::date as date,
-  count(*) as purchases,
-  sum(ct.amount) as credits_sold,
-  -- 패키지 매출 추정 (credit_packages 단가 기준)
-  sum(case
-    when ct.amount = 20 then 4.00
-    when ct.amount = 60 then 9.00
-    when ct.amount = 150 then 19.00
-    else 0
-  end) as revenue_usd
-from credit_transactions ct
-where ct.type = 'purchase'
-  and ct.created_at >= current_date - interval '7 days'
-group by 1
-order by 1 desc;
+### 정산 방법
 ```
-
-### 코호트 전환율 (가입 후 유료 전환)
-```sql
-select
-  date_trunc('week', p.created_at)::date as signup_week,
-  count(distinct p.id) as total_signups,
-  count(distinct ct.user_id) as paid_users,
-  round(100.0 * count(distinct ct.user_id) / count(distinct p.id), 1) as conversion_rate
-from profiles p
-left join credit_transactions ct on ct.user_id = p.id and ct.type = 'purchase'
-where p.created_at >= current_date - interval '8 weeks'
-group by 1
-order by 1 desc;
+1. 위 쿼리로 작가별 정산액 확인
+2. 카카오페이 또는 계좌이체로 지급
+3. artist_payouts.status = 'paid' 업데이트
+4. 작가에게 정산 내역 DM (트위터)
 ```
 
 ---
 
-## 월간 확인 쿼리
+## 3. 장애 대응
 
-### MRR (이번 달 수익)
-```sql
-select
-  count(*) as total_purchases,
-  sum(case when amount = 20 then 4.00 when amount = 60 then 9.00 when amount = 150 then 19.00 else 0 end) as mrr_usd
-from credit_transactions
-where type = 'purchase'
-  and date_trunc('month', created_at) = date_trunc('month', current_date);
+### Replicate API 느릴 때
+```
+증상: 생성 시간 60초 이상
+대응:
+1. Replicate 상태 페이지 확인 (status.replicate.com)
+2. 서비스 공지 (작가 트위터 DM)
+3. 일시적이면 대기, 지속되면 Cold Start 문제
+   → 모델 warmup 요청 (Replicate 콘솔에서 수동 prediction)
 ```
 
-### D30 리텐션
-```sql
-with cohort as (
-  select id, created_at::date as signup_date
-  from profiles
-  where created_at >= current_date - interval '60 days'
-    and created_at < current_date - interval '30 days'
-)
-select
-  count(distinct c.id) as cohort_size,
-  count(distinct g.user_id) as returned_d30,
-  round(100.0 * count(distinct g.user_id) / count(distinct c.id), 1) as d30_retention
-from cohort c
-left join generations g on g.user_id = c.id
-  and g.created_at::date between c.signup_date + 29 and c.signup_date + 31;
+### 결제 안 될 때
+```
+증상: 토스 결제 창 안 뜨거나 실패
+대응:
+1. 토스 대시보드 확인
+2. 환경변수 키 확인 (test/live 혼용 주의)
+3. 토스 고객센터 문의: 1544-7772
 ```
 
-### 스타일 프리셋별 인기도
-```sql
-select
-  coalesce(style_preset, '(없음)') as style,
-  count(*) as usage_count,
-  round(100.0 * count(*) / sum(count(*)) over(), 1) as percentage
-from generations
-where created_at >= current_date - interval '30 days'
-group by 1
-order by 2 desc;
+### NSFW 필터 오작동 (정상 이미지 차단)
+```
+증상: 평범한 프롬프트인데 filtered 반환
+대응:
+1. generations 테이블에서 해당 generation_id 조회
+2. prompt 확인 후 오탐 판단
+3. 오탐이면 크레딧 수동 환불
+   update credits set amount = amount + 1
+   where user_id = 'xxx';
+4. 반복 오탐 패턴이면 FORCED_NEGATIVE 수정
+```
+
+### Supabase Storage 업로드 실패
+```
+증상: 생성은 됐는데 이미지 URL 없음
+대응:
+1. Supabase Storage 용량 확인 (무료: 1GB)
+2. 버킷 정책 확인
+3. 이미지 자동 삭제 정책 고려
+   → 30일 이상 된 이미지 주기적 삭제
 ```
 
 ---
 
-## 운영 액션 쿼리
+## 4. 작가 관리
 
-### 수동 크레딧 지급 (CS 대응)
+### 새 작가 추가
 ```sql
--- 특정 유저에게 크레딧 지급
-select add_credits(
-  'USER_UUID_HERE',  -- 유저 ID
-  10,                -- 지급 크레딧 수
-  'bonus',           -- 타입
-  'CS 대응: 생성 실패 보상'  -- 사유
+-- 1. 작가 데이터 insert
+insert into artists (
+  name,
+  twitter_handle,
+  avatar_url,
+  bio,
+  replicate_model_version,
+  trigger_word,
+  is_active,
+  sort_order
+) values (
+  '모치모치',
+  'mochimochi_art',
+  'https://...avatar.jpg',
+  '파스텔 감성 캐릭터 일러스트',
+  'flux-dev-lora:abc123hash',  -- Replicate 학습 후 받은 버전 해시
+  'mochimochi_style',
+  false,  -- 샘플 이미지 추가 후 true로 변경
+  1
 );
+
+-- 2. 샘플 이미지 insert (6장 이상)
+insert into artist_samples (artist_id, image_url, sort_order)
+values
+  ('artist-uuid', 'https://...sample1.webp', 1),
+  ('artist-uuid', 'https://...sample2.webp', 2);
+
+-- 3. 확인 후 활성화
+update artists set is_active = true where id = 'artist-uuid';
 ```
 
-### 생성 stuck 확인 (processing 상태로 30분 이상)
+### 작가 비활성화 (요청 시)
 ```sql
-select
-  g.id,
-  g.user_id,
-  p.email,
-  g.replicate_prediction_id,
-  g.created_at,
-  now() - g.created_at as elapsed
-from generations g
-join profiles p on p.id = g.user_id
-where g.status = 'processing'
-  and g.created_at < now() - interval '30 minutes'
-order by g.created_at;
+update artists
+set is_active = false
+where twitter_handle = 'mochimochi_art';
+
+-- 기존 크레딧 보유자에게 환불 처리 여부 결정
+-- (현재 정책: 환불 없음, 다른 작가 사용 가능)
 ```
 
-### Stuck 생성 강제 실패 처리 + 크레딧 환불
+### 작가 금지 키워드 추가
 ```sql
--- 주의: 실제로 Replicate에서 완료됐는지 먼저 확인 후 실행
+update artists
+set banned_keywords = array_append(banned_keywords, '금지단어')
+where id = 'artist-uuid';
+```
+
+---
+
+## 5. 유저 CS 대응
+
+### 크레딧 수동 지급 (결제 후 미지급 신고)
+```sql
+-- 결제 확인 후 진행
+update credits
+set amount = amount + 1,  -- 혹은 5
+    updated_at = now()
+where user_id = 'user-uuid';
+
+-- 결제 상태 확인
+select * from payments
+where user_id = 'user-uuid'
+order by created_at desc
+limit 5;
+```
+
+### 생성 실패 크레딧 환불
+```sql
+-- 특정 생성 건 크레딧 환불
+update credits
+set amount = amount + 1,
+    updated_at = now()
+where user_id = (
+  select user_id from generations
+  where id = 'generation-uuid'
+);
+
 update generations
-set status = 'failed', error_message = 'Timeout: 자동 실패 처리'
-where id = 'GENERATION_UUID_HERE'
-  and status = 'processing';
-
--- 환불
-select add_credits(
-  'USER_UUID_HERE',
-  1,
-  'refund',
-  '생성 타임아웃 환불'
-);
+set status = 'refunded'
+where id = 'generation-uuid';
 ```
 
-### 유저 검색
+---
+
+## 6. 비용 모니터링
+
+### 월간 비용 추적
+
+```
+Replicate:
+- 대시보드: replicate.com/account/billing
+- 목표: 생성 건당 $0.04 이하 유지
+- 경보: 월 $100 초과 시 이메일 알림 설정
+
+Supabase:
+- 무료 티어: DB 500MB, Storage 1GB, 50,000 MAU
+- 초과 시: Pro 플랜 $25/월
+
+Vercel:
+- 무료 티어: 충분 (개인 프로젝트 기준)
+- Bandwidth 100GB/월 초과 시 과금
+
+토스페이먼츠:
+- 수수료: 결제금액의 3.5%
+- 별도 청구 없음 (결제 시 자동 차감)
+```
+
+### 손익 계산 시트 (월간)
+```
+매출    = 결제 건수 × 평균 결제금액
+지출    = Replicate 비용 + Supabase (초과분) + Vercel (초과분)
+수수료  = 매출 × 3.5% (토스)
+작가    = 생성 건수 × 634원
+순이익  = 매출 - 지출 - 수수료 - 작가 정산
+```
+
+---
+
+## 7. PMF 판단 대시보드 쿼리
+
+### 매주 실행해서 추적
+
 ```sql
-select id, email, credits, total_generated, created_at
-from profiles
-where email ilike '%검색어%'
-order by created_at desc;
+-- 주간 핵심 지표
+select
+  -- 총 생성
+  count(*) filter (where g.status = 'done') as weekly_generations,
+
+  -- 재사용률 (7일 내 2번 이상 결제)
+  (
+    select count(distinct user_id)
+    from payments
+    where status = 'done'
+      and created_at >= now() - interval '7 days'
+    group by user_id
+    having count(*) >= 2
+  ) as repeat_payers,
+
+  -- 전환율 (방문 → 결제) - 별도 analytics 도구 필요
+  -- GA4 또는 Supabase Analytics 사용
+
+  -- 작가당 평균 일일 생성
+  count(*) filter (where g.status = 'done') /
+    (select count(*) from artists where is_active = true) /
+    7.0 as avg_daily_per_artist
+
+from generations g
+where g.created_at >= now() - interval '7 days';
 ```
