@@ -1,8 +1,30 @@
 import Replicate from 'replicate'
+import Anthropic from '@anthropic-ai/sdk'
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN!,
 })
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+})
+
+function hasKorean(text: string) {
+  return /[\uAC00-\uD7A3]/.test(text)
+}
+
+async function translateToEnglish(text: string): Promise<string> {
+  const msg = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 200,
+    messages: [{
+      role: 'user',
+      content: `Translate this image generation prompt to English. Output ONLY the translated prompt, nothing else.\n\n${text}`,
+    }],
+  })
+  const content = msg.content[0]
+  return content.type === 'text' ? content.text.trim() : text
+}
 
 const FORCED_NEGATIVE = [
   'nsfw', 'nude', 'explicit', 'sexual', 'adult content',
@@ -38,10 +60,14 @@ export async function createPrediction({
     throw new Error(`BANNED_KEYWORD:${banned}`)
   }
 
+  const finalPrompt = hasKorean(userPrompt)
+    ? await translateToEnglish(userPrompt)
+    : userPrompt
+
   return await replicate.predictions.create({
     version: modelVersion,
     input: {
-      prompt: `${triggerWord}, ${userPrompt}`,
+      prompt: `${triggerWord}, ${finalPrompt}`,
       negative_prompt: FORCED_NEGATIVE,
       num_inference_steps: 28,
       guidance_scale: 3.5,
