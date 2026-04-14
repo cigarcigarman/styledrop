@@ -45,6 +45,7 @@ export async function createPrediction({
       negative_prompt: FORCED_NEGATIVE,
       num_inference_steps: 28,
       guidance_scale: 3.5,
+      lora_scale: 0.85,
       width: 1024,
       height: 1024,
       output_format: 'webp',
