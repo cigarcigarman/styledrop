@@ -7,6 +7,8 @@ import { Suspense } from 'react'
 import type { Metadata } from 'next'
 import type { Artist } from '@/types/database'
 
+export const dynamic = 'force-dynamic'
+
 export const metadata: Metadata = {
   title: 'StyleDrop — 작가 화풍으로 AI 이미지 만들기',
 }
